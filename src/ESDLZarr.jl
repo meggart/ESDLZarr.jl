@@ -1,6 +1,7 @@
 module ESDLZarr
 using ESDL
-import Zarr.ZarrGroup
+import Zarr: ZarrGroup, zopen
+import ESDL.CubeAPI: getNv, gettoffsnt, getvartype, Cube
 import Base.Dates: Day, year
 
 struct ZarrConfig
@@ -36,7 +37,6 @@ end
 function ZarrCube(p::String)
   Cube(zopen("/home/fgans/zarr/esdc-8d-0.25deg-1x720x1440-1.0.1_1_zarr","r"))
 end
-import ESDL.CubeAPI: getNv, gettoffsnt, getvartype, Cube
 function Cube(zg::ZarrGroup)
   vni = Dict(i[2]=>i[1] for i in enumerate(zg.arrays))
   ZarrCube(zg.g[:_store][:path],zg,zg.arrays,vni,ZarrConfig(zg))
