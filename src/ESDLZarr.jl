@@ -35,7 +35,7 @@ struct ZarrCube <: ESDL.CubeAPI.UCube
   config::ZarrConfig
 end
 function ZarrCube(p::String)
-  Cube(zopen("/home/fgans/zarr/esdc-8d-0.25deg-1x720x1440-1.0.1_1_zarr","r"))
+  Cube(zopen(p,"r"))
 end
 function Cube(zg::ZarrGroup)
   vni = Dict(i[2]=>i[1] for i in enumerate(zg.arrays))
