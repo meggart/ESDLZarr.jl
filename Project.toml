@@ -1,0 +1,8 @@
+name = "ESDLZarr"
+uuid = "8e303908-d152-5e96-bbd6-92af44a3e3e1"
+authors = ["Fabian Gans <fgans@bgc-jena.mpg.de>"]
+
+[deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+ESDL = "359177bc-a543-11e8-11b7-bb015dba3358"
+ZarrNative = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
