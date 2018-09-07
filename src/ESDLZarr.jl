@@ -50,8 +50,7 @@ function ESDL.Cubes._read(s::ESDL.CubeAPI.SubCube{<:Any,ZarrCube},t::Tuple,r::Ca
   y1,i1,y2,i2,ntime,NpY           = s.sub_times
   toffs,nt= gettoffsnt(s,r)
   toffs = (y1 - year(s.cube.config.start_time))*NpY + i1 + toffs
-  rcor = CartesianIndices((r.indices[1]+grid_x1-1, r.indices[2]+grid_y2-1, toffs:toffs+nt-1))
-
+  rcor = CartesianIndices((r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1), (toffs:toffs.+nt-1)))
   #voffs,nv = getNv(r)
   singvar_zarr(outar,s.cube,s.variable,rcor)
   lsmask = s.cube.group["water_mask"][rcor.indices[1],rcor.indices[2],1:1]
@@ -77,9 +76,6 @@ end
 
 import ZarrNative
 function singvar_zarr(outar,cube,variable,r)
-  @show r.indices
-  @show variable
-  @show typeof(cube.group[variable])
   ZarrNative.ZArrays.readblock!(outar, cube.group[variable],r)
 end
 
