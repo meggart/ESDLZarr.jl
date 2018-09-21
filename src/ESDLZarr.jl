@@ -82,12 +82,9 @@ function ESDL.Cubes._read(s::ESDL.CubeAPI.SubCubeStatic{<:Any,ZarrCube},t::Tuple
   grid_y1,grid_y2,grid_x1,grid_x2 = s.sub_grid
   y1,i1,y2,i2,ntime,NpY           = s.sub_times
   toffs = (y1 - year(s.cube.config.start_time))*NpY + i1
-  @show toffs
-  #@show (r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1), toffs:toffs+nt-1)
-  rcor = CartesianIndices((r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1),(toffs+1):(toffs+1)))
-  #@show rcor.indices
+  rcor = CartesianIndices((r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1),(toffs):(toffs)))
   lsmask = reshape(s.cube.group["water_mask"][rcor.indices[1],rcor.indices[2],1],size(rcor,1),size(rcor,2))
-    singvar_zarr(outar,s.cube,s.variable,rcor)
+  singvar_zarr(outar,s.cube,s.variable,rcor)
   broadcast!((v,m)->((UInt8(m)-0x01)*0x05) | isnan(v),mask,outar,lsmask)
 end
 
