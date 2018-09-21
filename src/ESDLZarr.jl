@@ -58,6 +58,8 @@ function ESDL.Cubes._read(s::ESDL.CubeAPI.SubCube{<:Any,ZarrCube},t::Tuple,r::Ca
 end
 function ESDL.Cubes._read(s::ESDL.CubeAPI.SubCubeV{<:Any,ZarrCube},t::Tuple,r::CartesianIndices)
   outar,mask=t
+  #@show size(outar)
+  #@show r.indices
   grid_y1,grid_y2,grid_x1,grid_x2 = s.sub_grid
   y1,i1,y2,i2,ntime,NpY           = s.sub_times
 
@@ -66,11 +68,26 @@ function ESDL.Cubes._read(s::ESDL.CubeAPI.SubCubeV{<:Any,ZarrCube},t::Tuple,r::C
   voffs,nv = getNv(r)
   #@show (r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1), toffs:toffs+nt-1)
   rcor = CartesianIndices((r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1), toffs:toffs+nt-1))
-  #println(rcor)
+  #@show rcor.indices
   lsmask = reshape(s.cube.group["water_mask"][rcor.indices[1],rcor.indices[2],1],size(rcor,1),size(rcor,2),1,1)
-  for iv=(voffs+1):(voffs+nv)
-    singvar_zarr(view(outar,:,:,:,iv),s.cube,s.variable[iv],rcor)
+  for (iiv,iv)=enumerate((voffs+1):(voffs+nv))
+    singvar_zarr(view(outar,:,:,:,iiv),s.cube,s.variable[iv],rcor)
   end
+  broadcast!((v,m)->((UInt8(m)-0x01)*0x05) | isnan(v),mask,outar,lsmask)
+end
+function ESDL.Cubes._read(s::ESDL.CubeAPI.SubCubeStatic{<:Any,ZarrCube},t::Tuple,r::CartesianIndices)
+  outar,mask=t
+  #@show size(outar)
+  #@show r.indices
+  grid_y1,grid_y2,grid_x1,grid_x2 = s.sub_grid
+  y1,i1,y2,i2,ntime,NpY           = s.sub_times
+  toffs = (y1 - year(s.cube.config.start_time))*NpY + i1
+  @show toffs
+  #@show (r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1), toffs:toffs+nt-1)
+  rcor = CartesianIndices((r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1),(toffs+1):(toffs+1)))
+  #@show rcor.indices
+  lsmask = reshape(s.cube.group["water_mask"][rcor.indices[1],rcor.indices[2],1],size(rcor,1),size(rcor,2))
+    singvar_zarr(outar,s.cube,s.variable,rcor)
   broadcast!((v,m)->((UInt8(m)-0x01)*0x05) | isnan(v),mask,outar,lsmask)
 end
 
