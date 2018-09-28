@@ -2,6 +2,7 @@ module ESDLZarr
 using ESDL
 import ZarrNative: ZGroup, zopen
 import ESDL.CubeAPI: getNv, gettoffsnt, getvartype, Cube
+import ESDL.Cubes: cubechunks, iscompressed
 using Dates
 
 struct ZarrConfig
@@ -13,18 +14,22 @@ struct ZarrConfig
   grid_width::Int
   spatial_res::Float64
   temporal_res::Int
+  chunk_sizes::NTuple{3,Int}
+  compressed::Bool
 end
-function ZarrConfig(g::ZGroup)
+function ZarrConfig(g::ZGroup,firstvar)
   timeax = g["time"]
   timevals = timeax[:]
   refdate = Date(split(timeax.attrs["units"]," ")[3])
-  start_time = refdate+Base.Dates.Day(first(timevals))-Day(4)
-  end_time = refdate+Base.Dates.Day(last(timevals))-Day(4)
+  start_time = refdate+Dates.Day(first(timevals))-Day(4)
+  end_time = refdate+Dates.Day(last(timevals))-Day(4)
   lonax = g["lon"]
   latax = g["lat"]
   sres = abs(latax[2][1]-latax[1][1])
   tres = timevals[2][1]-timevals[1][1]
-  ZarrConfig(start_time,end_time,0,0,length(latax),2*length(latax),sres,tres)
+  cs = g[firstvar].chunks
+  compressed = !isa(g[firstvar].compressor,ZarrNative.Compressors.NoCompressor)
+  ZarrConfig(start_time,end_time,0,0,length(latax),2*length(latax),sres,tres,cs,compressed)
 end
 
 struct ZarrCube <: ESDL.CubeAPI.UCube
@@ -41,9 +46,11 @@ function Cube(zg::ZGroup)
   spattempars = filter(v->ndims(v[2])==3,zg.arrays)
   varlist = collect(keys(spattempars))
   vni = Dict(i[2]=>i[1] for i in enumerate(varlist))
-  ZarrCube(zg.folder.folder,zg,varlist,vni,ZarrConfig(zg))
+  ZarrCube(zg.folder.folder,zg,varlist,vni,ZarrConfig(zg,varlist[1]))
 end
 getvartype(c::ZarrCube, n::String)=eltype(c.group[n])
+cubechunks(c::ZarrCube)=c.config.chunk_sizes
+iscompressed(c::ZarrCube)=c.config.compressed
 function ESDL.Cubes._read(s::ESDL.CubeAPI.SubCube{<:Any,ZarrCube},t::Tuple,r::CartesianIndices)
   outar,mask=t
   grid_y1,grid_y2,grid_x1,grid_x2 = s.sub_grid
