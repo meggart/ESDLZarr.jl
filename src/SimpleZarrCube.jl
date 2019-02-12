@@ -1,0 +1,3 @@
+struct ZCube
+  ar
+end
