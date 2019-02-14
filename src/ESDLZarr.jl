@@ -1,94 +1,157 @@
 module ESDLZarr
 using ESDL
-import ZarrNative: ZGroup, zopen
+import ZarrNative: ZGroup, zopen, ZArray
 import ESDL.CubeAPI: getNv, gettoffsnt, getvartype, Cube
-import ESDL.Cubes: cubechunks, iscompressed
-using Dates
+import ESDL.Cubes: cubechunks, iscompressed, AbstractCubeData, getCubeDes,
+  caxes,chunkoffset, gethandle, subsetCube, axVal2Index, findAxis
+import ESDL.Cubes.Axes: axname
+import Dates: Day,Hour,Minute,Second,Month,Year, Date
+const spand = Dict("days"=>Day,"months"=>Month,"years"=>Year,"seconds"=>Second,"minutes"=>Minute)
 
-struct ZarrConfig
-  start_time::Date
-  end_time::Date
-  grid_x0::Int
-  grid_y0::Int
-  grid_height::Int
-  grid_width::Int
-  spatial_res::Float64
-  temporal_res::Int
-  chunk_sizes::NTuple{3,Int}
-  compressed::Bool
+struct ZArrayCube{T,N,A<:ZArray{T,N},S} <: AbstractCubeData{T,N}
+  a::A
+  axes::Vector{CubeAxis}
+  subset::S
 end
-function ZarrConfig(g::ZGroup,firstvar)
-  timeax = g["time"]
-  timevals = timeax[:]
-  refdate = Date(split(timeax.attrs["units"]," ")[3])
-  start_time = refdate+Dates.Day(first(timevals))-Day(4)
-  end_time = refdate+Dates.Day(last(timevals))-Day(4)
-  lonax = g["lon"]
-  latax = g["lat"]
-  sres = abs(latax[2][1]-latax[1][1])
-  tres = timevals[2][1]-timevals[1][1]
-  cs = g[firstvar].metadata.chunks
-  compressed = !isa(g[firstvar].metadata.compressor,ZarrNative.NoCompressor)
-  ZarrConfig(start_time,end_time,0,0,length(latax),2*length(latax),sres,tres,cs,compressed)
+import ZarrNative: readblock!
+getCubeDes(::ZArrayCube)="ZArray Cube"
+caxes(z::ZArrayCube)=z.axes
+iscompressed(z::ZArrayCube)=!isa(z.a.metadata.compressor,ZarrNative.NoCompressor)
+cubechunks(z::ZArrayCube)=z.a.metadata.chunks
+chunkoffset(z::ZArrayCube{<:Any,N}) where N=ntuple(i->0,N)
+Base.size(z::ZArrayCube) = length.(z.subset)
+Base.size(z::ZArrayCube{<:Any,<:Any,<:ZArray,Nothing}) = size(z.a)
+#ESDL.Cubes.gethandle(z::ZArrayCube) = z.a
+function ESDL.Cubes._read(z::ZArrayCube{<:Any,N,<:Any,<:Nothing},thedata::AbstractArray{<:Any,N},r::CartesianIndices{N}) where N
+  readblock!(thedata,z.a,r)
 end
 
-struct ZarrCube <: ESDL.CubeAPI.UCube
-  path::String
-  group::ZGroup
-  dataset_files::Vector{String}
-  var_name_to_var_index::Dict{String,Int}
-  config::ZarrConfig
+#Helper functions for subsetting indices
+_getinds(s1,s,i) = s1[firstarg(i...)],Base.tail(i)
+_getinds(s1::Int,s,i) = s1,i
+function getsubinds(subset,inds)
+    el,rest = _getinds(firstarg(subset...),subset,inds)
+    (el,getsubinds(Base.tail(subset),rest)...)
 end
-function ZarrCube(p::String)
-  Cube(zopen(p))
-end
-function Cube(zg::ZGroup)
-  spattempars = filter(v->ndims(v[2])==3,zg.arrays)
-  varlist = collect(keys(spattempars))
-  vni = Dict(i[2]=>i[1] for i in enumerate(varlist))
-  ZarrCube(zg.storage.folder,zg,varlist,vni,ZarrConfig(zg,varlist[1]))
-end
-getvartype(c::ZarrCube, n::String)=eltype(c.group[n])
-cubechunks(c::ZarrCube)=c.config.chunk_sizes
-iscompressed(c::ZarrCube)=c.config.compressed
-function ESDL.Cubes._read(s::ESDL.CubeAPI.SubCube{<:Any,ZarrCube},t::AbstractArray,r::CartesianIndices)
-  grid_y1,grid_y2,grid_x1,grid_x2 = s.sub_grid
-  y1,i1,y2,i2,ntime,NpY           = s.sub_times
-  toffs,nt= gettoffsnt(s,r)
-  toffs = (y1 - year(s.cube.config.start_time))*NpY + i1 + toffs
-  rcor = CartesianIndices((r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1), (toffs:toffs.+nt-1)))
-  #voffs,nv = getNv(r)
-  singvar_zarr(t,s.cube,s.variable,rcor)
-end
-function ESDL.Cubes._read(s::ESDL.CubeAPI.SubCubeV{<:Any,ZarrCube},t::AbstractArray,r::CartesianIndices)
-  grid_y1,grid_y2,grid_x1,grid_x2 = s.sub_grid
-  y1,i1,y2,i2,ntime,NpY           = s.sub_times
+getsubinds(subset::Tuple{},inds) = ()
+firstarg(x,s...) = x
 
-  toffs,nt= gettoffsnt(s,r)
-  toffs = (y1 - year(s.cube.config.start_time))*NpY + i1 + toffs
-  voffs,nv = getNv(r)
-  #@show (r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1), toffs:toffs+nt-1)
-  rcor = CartesianIndices((r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1), toffs:toffs+nt-1))
-  #@show rcor.indices
-  for (iiv,iv)=enumerate((voffs+1):(voffs+nv))
-    singvar_zarr(view(t,:,:,:,iiv),s.cube,s.variable[iv],rcor)
+
+function ESDL.Cubes._read(z::ZArrayCube{<:Any,N,<:Any},thedata::AbstractArray{<:Any,N},r::CartesianIndices{N}) where N
+  allinds = CartesianIndices(map(Base.OneTo,size(z.a)))
+  subinds = map(getindex,allinds.indices,z.subset)
+  @show subinds, r.indices
+  r2 = getsubinds(subinds,r.indices)
+  readblock!(thedata,z.a,CartesianIndices(r2))
+end
+
+function _write(y::ZArrayCube{<:Any,N,<:Any,<:Nothing},thedata::AbstractArray,r::CartesianIndices{N}) where N
+  readblock!(thedata,z.a,r,readmode=false)
+end
+
+function infervarlist(g::ZGroup)
+  dimsdict = Dict{Tuple,Vector{String}}()
+  foreach(g.arrays) do ar
+    k,v = ar
+    vardims = reverse((v.attrs["_ARRAY_DIMENSIONS"]...,))
+    haskey(dimsdict,vardims) ? push!(dimsdict[vardims],k) : dimsdict[vardims] = [k]
+  end
+  filter!(p->!in("bnds",p[1]),dimsdict)
+  llist = Dict(p[1]=>length(p[2]) for p in dimsdict)
+  _,dims = findmax(llist)
+  varlist = dimsdict[dims]
+end
+
+function parsetimeunits(unitstr)
+    unitstr = "days since 1982-01-05"
+    re = r"(\w+) since (\d\d\d\d)-(\d\d)-(\d\d)"
+
+    m = match(re,unitstr)
+
+    refdate = Date(map(i->parse(Int,m[i]),2:4)...)
+    refdate,spand[m[1]]
+end
+function toaxis(dimname,g)
+    axname = dimname in ("lon","lat","time") ? uppercasefirst(dimname) : dimname
+    ar = g[dimname]
+    if axname=="Time" && haskey(ar.attrs,"units")
+        refdate,span = parsetimeunits(ar.attrs["units"])
+        tsteps = refdate.+span.(ar[:])
+        TimeAxis(tsteps)
+    else
+      axdata = testrange(ar[:])
+      RangeAxis(axname,axdata)
+    end
+end
+
+"Test if data in x can be approximated by a step range"
+function testrange(x)
+  r = range(first(x),last(x),length=length(x))
+  all(i->isapprox(i...),zip(x,r)) ? r : x
+end
+import DataStructures: counter
+
+function Cube(g::ZGroup;varlist=nothing,joinname="Variable")
+
+  if varlist===nothing
+    varlist = infervarlist(g)
+  end
+  v1 = g[varlist[1]]
+  s = size(v1)
+  vardims = reverse((v1.attrs["_ARRAY_DIMENSIONS"]...,))
+  inneraxes = toaxis.(vardims,Ref(g))
+  iax = collect(CubeAxis,inneraxes)
+  s == length.(inneraxes) || throw(DimensionMismatch("Array dimensions do not fit"))
+  allcubes = map(varlist) do iv
+    v = g[iv]
+    size(v) == s || throw(DimensionMismatch("All variables must have the same shape. $iv does not match $(varlist[1])"))
+    ZArrayCube(v,iax,nothing)
+  end
+  # Filter out minority element types
+  c = counter(eltype(i) for i in allcubes)
+  _,et = findmax(c)
+  indtake = findall(i->eltype(i)==et,allcubes)
+  allcubes = allcubes[indtake]
+  varlist  = varlist[indtake]
+  if length(allcubes)==1
+    return allcubes[1]
+  else
+    return concatenateCubes(allcubes,CategoricalAxis(joinname,varlist))
   end
 end
-function ESDL.Cubes._read(s::ESDL.CubeAPI.SubCubeStatic{<:Any,ZarrCube},t::AbstractArray,r::CartesianIndices)
-  grid_y1,grid_y2,grid_x1,grid_x2 = s.sub_grid
-  y1,i1,y2,i2,ntime,NpY           = s.sub_times
-  toffs = (y1 - year(s.cube.config.start_time))*NpY + i1
-  rcor = CartesianIndices((r.indices[1].+(grid_x1-1), r.indices[2].+(grid_y1-1),(toffs):(toffs)))
-  singvar_zarr(t,s.cube,s.variable,rcor)
-end
 
-import ZarrNative
-function singvar_zarr(outar,cube,variable,r)
-  ZarrNative.readblock!(outar, cube.group[variable],r)
-  mv  = cube.group[variable].metadata.fill_value
-  if !isa(mv,Nothing)
-    replace!(outar,mv=>missing)
+sorted(x,y) = x<y ? (x,y) : (y,x)
+
+interpretsubset(subexpr::Union{CartesianIndices{1},LinearIndices{1}},ax) = subexpr.indices[1]
+interpretsubset(subexpr::CartesianIndex{1},ax)   = subexpr.I[1]
+interpretsubset(subexpr,ax)                      = axVal2Index(ax,subexpr)
+interpretsubset(subexpr::NTuple{2,Any},ax)       = Colon()(sorted(axVal2Index(ax,subexpr[1]),axVal2Index(ax,subexpr[2]))...)
+#interpretsubset(subexpr::AbstractVector,ax)      = axVal2Index.(Ref(ax),subexpr)
+
+import ESDL.Cubes: subsetCube
+using InteractiveUtils
+
+axcopy(ax::RangeAxis,vals) = RangeAxis(axname(ax),vals)
+axcopy(ax::CategoricalAxis,vals) = CategoricalAxis(axname(ax),vals)
+
+function subsetCube(z::ZArrayCube;kwargs...)
+  subs = isnothing(z.subset) ? collect(Any,map(Base.OneTo,size(z))) : collect(z.subset)
+  newaxes = deepcopy(caxes(z))
+  foreach(kwargs) do kw
+    axdes,subexpr = kw
+    axdes = string(axdes)
+    iax = findAxis(axdes,caxes(z))
+    if isnothing(iax)
+      throw(ArgumentError("Axis $axdes not found in cube"))
+    else
+      oldax = newaxes[iax]
+      subinds = interpretsubset(subexpr,oldax)
+      subs2 = subs[iax][subinds]
+      subs[iax] = subs2
+      newaxes[iax] = axcopy(oldax,oldax.values[subinds])
+    end
   end
+  newaxes = filter(ax->length(ax)>1,newaxes) |> collect
+  ZArrayCube(z.a,newaxes,ntuple(i->subs[i],length(subs)))
 end
-
 end # module
